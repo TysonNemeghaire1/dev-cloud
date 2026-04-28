@@ -471,7 +471,7 @@ kafkausers.kafka.strimzi.io                            2026-04-28T10:39:16Z
 Fichier `tp3-app/kafka/cluster.yaml` :
 
 ```yaml
-apiVersion: kafka.strimzi.io/v1
+apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaNodePool
 metadata:
   name: dual-role
@@ -484,18 +484,16 @@ spec:
     - controller
     - broker
   storage:
-    type: persistent-claim
-    size: 20Gi
-    deleteClaim: true
+    type: ephemeral
   resources:
     requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
       memory: "1Gi"
       cpu: "500m"
-    limits:
-      memory: "2Gi"
-      cpu: "1"
 ---
-apiVersion: kafka.strimzi.io/v1
+apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka
 metadata:
   name: logistream-kafka
@@ -569,7 +567,7 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
   name: truck-positions
-  namespace: logistream
+  namespace: kafka
   labels:
     strimzi.io/cluster: logistream-kafka
 spec:
@@ -584,7 +582,7 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
   name: delivery-alerts
-  namespace: logistream
+  namespace: kafka
   labels:
     strimzi.io/cluster: logistream-kafka
 spec:
@@ -599,7 +597,7 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
   name: delivery-events
-  namespace: logistream
+  namespace: kafka
   labels:
     strimzi.io/cluster: logistream-kafka
 spec:
@@ -864,8 +862,8 @@ Fichier `tp3-app/producer/Dockerfile` :
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
-COPY ../../../Téléchargements .
+RUN npm install --omit=dev
+COPY . .
 USER node
 CMD ["node", "gps-producer.js"]
 ```
@@ -876,7 +874,7 @@ Fichier `tp3-app/consumer/Dockerfile` :
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --omit=dev
 COPY . .
 USER node
 CMD ["node", "tracker-consumer.js"]
@@ -1078,87 +1076,123 @@ created key [...] of type [json] as [cicd-key.json]
 
 ### 3.3 — Pipeline CI/CD complet
 
-Fichier `.gitlab-ci.yml` :
+Fichier `.github/workflows/logistream-deploy.yml` :
 
 ```yaml
-stages:
-  - test
-  - build
-  - deploy
+name: LogiStream — CI/CD Pipeline
 
-variables:
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  GKE_REGION: ${{ secrets.GKE_REGION }}
   REGISTRY: europe-west9-docker.pkg.dev
 
-# ==========================================================
-# Job 1 : Tests (s'execute sur chaque MR et chaque push)
-# ==========================================================
-test:
-  stage: test
-  image: node:20
-  script:
-    - cd tp3/producer && npm ci && cd ../..
-    - cd tp3/consumer && npm ci && cd ../..
-    - echo "Dependances installees — tests OK"
-    - |
-      curl -sL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
-      ./kubeval tp3-app/k8s/*.yaml --ignore-missing-schemas || echo "Validation terminee"
+jobs:
+  # ==========================================================
+  # Job 1 : Tests (s'execute sur chaque PR et chaque push)
+  # ==========================================================
+  test:
+    name: Tests & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Installer les dependances producer
+        run: cd tp3-app/producer && npm install
+      - name: Installer les dependances consumer
+        run: cd tp3-app/consumer && npm install
+      - name: Lint du code
+        run: npm run lint || echo "Lint non configure — skip"
+      - name: Valider les manifests Kubernetes
+        run: |
+          curl -sL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
+          ./kubeval tp3-app/k8s/*.yaml --ignore-missing-schemas || echo "Validation terminee"
 
-# ==========================================================
-# Job 2 : Build & Push (uniquement sur push main)
-# ==========================================================
-build-push:
-  stage: build
-  image: docker:latest
-  services:
-    - docker:dind
-  only:
-    - main
-  before_script:
-    - echo "$GCP_SA_KEY" | docker login -u _json_key --password-stdin https://${REGISTRY}
-  script:
-    - export SHA=${CI_COMMIT_SHA}
-    - docker build -t ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/gps-producer:${SHA} ./tp3-app/producer/
-    - docker push ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/gps-producer:${SHA}
-    - docker build -t ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/tracker-consumer:${SHA} ./tp3-app/consumer/
-    - docker push ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/tracker-consumer:${SHA}
-    - echo "PRODUCER_TAG=${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/gps-producer:${SHA}" >> build.env
-    - echo "CONSUMER_TAG=${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/tracker-consumer:${SHA}" >> build.env
-  artifacts:
-    reports:
-      dotenv: build.env
+  # ==========================================================
+  # Job 2 : Build & Push (uniquement sur push main)
+  # ==========================================================
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authentification GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configurer Docker
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+      - name: Build & Push GPS Producer
+        run: |
+          TAG=${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/tp2-registry/gps-producer:${{ github.sha }}
+          docker build -t ${TAG} ./tp3-app/producer/
+          docker push ${TAG}
+      - name: Build & Push Tracker Consumer
+        run: |
+          TAG=${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/tp2-registry/tracker-consumer:${{ github.sha }}
+          docker build -t ${TAG} ./tp3-app/consumer/
+          docker push ${TAG}
 
-# ==========================================================
-# Job 3 : Deploy sur GKE
-# ==========================================================
-deploy:
-  stage: deploy
-  image: google/cloud-sdk:latest
-  only:
-    - main
-  dependencies:
-    - build-push
-  script:
-    - echo "$GCP_SA_KEY" | gcloud auth activate-service-account --key-file=-
-    - gcloud container clusters get-credentials ${GKE_CLUSTER} --region=${GKE_REGION} --project=${GCP_PROJECT_ID}
-    - kubectl set image deployment/gps-producer gps-producer=${PRODUCER_TAG} -n logistream
-    - kubectl set image deployment/tracker-consumer tracker-consumer=${CONSUMER_TAG} -n logistream
-    - kubectl rollout status deployment/gps-producer -n logistream --timeout=5m
-    - kubectl rollout status deployment/tracker-consumer -n logistream --timeout=5m
-    - kubectl get pods -n logistream
-    - kubectl get kafkatopics -n kafka
-    - echo "Deploiement LogiStream reussi"
+  # ==========================================================
+  # Job 3 : Deploy sur GKE
+  # ==========================================================
+  deploy:
+    name: Deploy sur GKE
+    runs-on: ubuntu-latest
+    needs: build-push
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authentification GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_REGION }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - name: Mettre a jour le GPS Producer
+        run: |
+          kubectl set image deployment/gps-producer \
+            gps-producer=${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/tp2-registry/gps-producer:${{ github.sha }} \
+            -n logistream
+      - name: Mettre a jour le Tracker Consumer
+        run: |
+          kubectl set image deployment/tracker-consumer \
+            tracker-consumer=${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/tp2-registry/tracker-consumer:${{ github.sha }} \
+            -n logistream
+      - name: Attendre les deploiements
+        run: |
+          kubectl rollout status deployment/gps-producer -n logistream --timeout=5m
+          kubectl rollout status deployment/tracker-consumer -n logistream --timeout=5m
+      - name: Verification post-deploiement
+        run: |
+          kubectl get pods -n logistream
+          kubectl get kafkatopics -n kafka
+          echo "Deploiement LogiStream reussi"
 ```
 
 ```bash
 # Declencher le pipeline
 git add .
-git commit -m "feat: add CI/CD pipeline GitLab"
+git commit -m "feat: add GitHub Actions CI/CD pipeline"
 git push origin main
 ```
 
 ```
-# Pipeline GitLab CI — 3 jobs passes :
-# - test : npm ci (producer + consumer) + kubeval manifests K8s -> OK
+# GitHub Actions — 3 jobs passes :
+# - test : npm install (producer + consumer) + kubeval manifests K8s -> OK
 # - build-push : docker build + push des 2 images vers Artifact Registry -> OK
 # - deploy : kubectl set image + rollout status sur GKE -> OK
 ```
@@ -1180,10 +1214,10 @@ kubectl top pods -n kafka -l strimzi.io/cluster=logistream-kafka
 
 ```
 NAME                                                CPU(cores)   MEMORY(bytes)
-logistream-kafka-dual-role-0                        25m          576Mi
-logistream-kafka-dual-role-1                        39m          659Mi
-logistream-kafka-dual-role-2                        29m          569Mi
-logistream-kafka-entity-operator-5f895dbb65-l2kcr   17m          412Mi
+logistream-kafka-dual-role-0                        35m          528Mi           
+logistream-kafka-dual-role-1                        44m          524Mi           
+logistream-kafka-dual-role-2                        47m          546Mi           
+logistream-kafka-entity-operator-647db68f77-swsfl   8m           424Mi 
 ```
 
 ```bash
@@ -1193,14 +1227,14 @@ kubectl top pods -n logistream
 
 ```
 NAME                                CPU(cores)   MEMORY(bytes)
-api-gateway-6cb97f5bc7-h2gmf        1m           25Mi
-api-gateway-6cb97f5bc7-zzz8j        1m           44Mi
-gps-producer-55d9967c9-rvzcn        45m          18Mi
-tracker-consumer-6b7bf48bcc-7p6sn   48m          25Mi
-tracker-consumer-6b7bf48bcc-8jdsp   48m          21Mi
-tracker-consumer-6b7bf48bcc-sv9kp   71m          23Mi
-tracker-service-849df4458-bm97g     1m           23Mi
-tracker-service-849df4458-mdtpq     1m           23Mi
+api-gateway-5696857784-f7brt        1m           27Mi            
+api-gateway-5696857784-kxtpc        1m           69Mi            
+gps-producer-c7c5469f5-4bzzf        46m          17Mi            
+tracker-consumer-7947547f4f-cl9g9   60m          17Mi            
+tracker-consumer-7947547f4f-g4fhr   62m          23Mi            
+tracker-consumer-7947547f4f-kxq79   60m          20Mi            
+tracker-service-5655b9d8f9-66nvk    1m           21Mi            
+tracker-service-5655b9d8f9-nlsdj    1m           35Mi   
 ```
 
 ```bash
@@ -1228,26 +1262,24 @@ kubectl delete pod kafka-lag-check -n kafka
 
 ```
 GROUP                 TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID                       HOST          CLIENT-ID
-tracker-service-group delivery-alerts 2          134             134             0    logistream-tracker-consumer-...    /10.8.0.30    logistream-tracker-consumer
-tracker-service-group truck-positions 0          -               0               -    logistream-tracker-consumer-...    /10.8.0.30    logistream-tracker-consumer
-tracker-service-group truck-positions 2          628             628             0    logistream-tracker-consumer-...    /10.8.0.30    logistream-tracker-consumer
-tracker-service-group delivery-alerts 0          -               0               -    logistream-tracker-consumer-...    /10.8.0.138   logistream-tracker-consumer
-tracker-service-group truck-positions 1          628             628             0    logistream-tracker-consumer-...    /10.8.0.138   logistream-tracker-consumer
-tracker-service-group truck-positions 4          -               0               -    logistream-tracker-consumer-...    /10.8.0.138   logistream-tracker-consumer
-tracker-service-group delivery-alerts 1          74              74              0    logistream-tracker-consumer-...    /10.8.0.29    logistream-tracker-consumer
-tracker-service-group truck-positions 3          -               0               -    logistream-tracker-consumer-...    /10.8.0.29    logistream-tracker-consumer
-tracker-service-group truck-positions 5          628             628             0    logistream-tracker-consumer-...    /10.8.0.29    logistream-tracker-consumer
+tracker-service-group delivery-alerts 0          -               0               -               logistream-tracker-consumer-24e4594a-5a98-45c5-9cfe-596ca553eb8a /10.84.0.27     logistream-tracker-consumer
+tracker-service-group truck-positions 0          -               0               -               logistream-tracker-consumer-24e4594a-5a98-45c5-9cfe-596ca553eb8a /10.84.0.27     logistream-tracker-consumer
+tracker-service-group truck-positions 5          285             285             0               logistream-tracker-consumer-24e4594a-5a98-45c5-9cfe-596ca553eb8a /10.84.0.27     logistream-tracker-consumer
+tracker-service-group delivery-alerts 2          64              64              0               logistream-tracker-consumer-e4e1e137-9c3a-49d5-bbfc-37b9edc0ff60 /10.84.0.26     logistream-tracker-consumer
+tracker-service-group truck-positions 1          285             285             0               logistream-tracker-consumer-e4e1e137-9c3a-49d5-bbfc-37b9edc0ff60 /10.84.0.26     logistream-tracker-consumer
+tracker-service-group truck-positions 3          -               0               -               logistream-tracker-consumer-e4e1e137-9c3a-49d5-bbfc-37b9edc0ff60 /10.84.0.26     logistream-tracker-consumer
+tracker-service-group delivery-alerts 1          30              30              0               logistream-tracker-consumer-497b9f23-2324-4357-8334-3a2d5a694566 /10.84.0.25     logistream-tracker-consumer
+tracker-service-group truck-positions 2          285             285             0               logistream-tracker-consumer-497b9f23-2324-4357-8334-3a2d5a694566 /10.84.0.25     logistream-tracker-consumer
+tracker-service-group truck-positions 4          -               0               -               logistream-tracker-consumer-497b9f23-2324-4357-8334-3a2d5a694566 /10.84.0.25     logistream-tracker-consumer
 ---
-Topic: truck-positions  PartitionCount: 6  ReplicationFactor: 3
-  Configs: min.insync.replicas=2, cleanup.policy=delete, retention.ms=86400000
-  Partition: 0  Leader: 2  Replicas: 2,0,1  Isr: 2,0,1
-  Partition: 1  Leader: 0  Replicas: 0,1,2  Isr: 0,1,2
-  Partition: 2  Leader: 1  Replicas: 1,2,0  Isr: 1,2,0
-  Partition: 3  Leader: 0  Replicas: 0,1,2  Isr: 0,1,2
-  Partition: 4  Leader: 1  Replicas: 1,2,0  Isr: 1,2,0
-  Partition: 5  Leader: 2  Replicas: 2,0,1  Isr: 2,0,1
-
-# LAG = 0 partout, ISR = 3/3 sur toutes les partitions -> cluster sain
+Topic: truck-positions  TopicId: gWblssXdT9epUYaBGkSUWg PartitionCount: 6       ReplicationFactor: 3    Configs: min.insync.replicas=2,cleanup.policy=delete,retention.ms=86400000,max.message.bytes=10240
+        Topic: truck-positions  Partition: 0    Leader: 1       Replicas: 1,2,0 Isr: 1,2,0      Elr:    LastKnownElr: 
+        Topic: truck-positions  Partition: 1    Leader: 2       Replicas: 2,0,1 Isr: 2,0,1      Elr:    LastKnownElr: 
+        Topic: truck-positions  Partition: 2    Leader: 0       Replicas: 0,1,2 Isr: 0,1,2      Elr:    LastKnownElr: 
+        Topic: truck-positions  Partition: 3    Leader: 0       Replicas: 0,1,2 Isr: 0,1,2      Elr:    LastKnownElr: 
+        Topic: truck-positions  Partition: 4    Leader: 1       Replicas: 1,2,0 Isr: 1,2,0      Elr:    LastKnownElr: 
+        Topic: truck-positions  Partition: 5    Leader: 2       Replicas: 2,0,1 Isr: 2,0,1      Elr:    LastKnownElr: 
+pod "kafka-lag-check" deleted from kafka namespace
 ```
 
 ### 4.2 — Logs structures et requetes Cloud Logging
@@ -1264,11 +1296,11 @@ gcloud logging read \
 
 ```
 TIMESTAMP                       TEXT_PAYLOAD
-2026-04-07T12:16:01.999126195Z  [2026-04-07T12:16:01.998Z] 3 positions envoyees (total: 141)
-2026-04-07T12:15:52.045234289Z  [2026-04-07T12:15:52.045Z] 3 positions envoyees (total: 138)
-2026-04-07T12:15:41.998320323Z  [2026-04-07T12:15:41.998Z] 3 positions envoyees (total: 135)
-2026-04-07T12:15:41.989982944Z  [ALERTE] Camion TRK-002 en retard de 15 minutes sur la route Lyon-Marseille
-2026-04-07T12:15:31.999158869Z  [2026-04-07T12:15:31.998Z] 3 positions envoyees (total: 132)
+2026-04-28T13:21:27.272471287Z  [2026-04-28T13:21:27.272Z] 3 positions envoyees (total: 96)
+2026-04-28T13:21:17.273432092Z  [2026-04-28T13:21:17.273Z] 3 positions envoyees (total: 93)
+2026-04-28T13:21:07.270719260Z  [2026-04-28T13:21:07.270Z] 3 positions envoyees (total: 90)
+2026-04-28T13:21:07.265138032Z  [ALERTE] Camion TRK-002 en retard de 15 minutes sur la route Lyon-Marseille
+2026-04-28T13:20:57.273275094Z  [2026-04-28T13:20:57.272Z] 3 positions envoyees (total: 87)
 ```
 
 ```bash
@@ -1284,11 +1316,11 @@ gcloud logging read \
 
 ```
 TIMESTAMP                       TEXT_PAYLOAD
-2026-04-07T12:16:11.987881631Z  [ALERTE] DELIVERY_DELAY | TRK-002 | Camion TRK-002 en retard de 15 minutes sur la route Lyon-Marseille
-2026-04-07T12:15:41.989072445Z  [ALERTE] DELIVERY_DELAY | TRK-002 | Camion TRK-002 en retard de 15 minutes sur la route Lyon-Marseille
-2026-04-07T12:15:11.988788544Z  [ALERTE] DELIVERY_DELAY | TRK-003 | Camion TRK-003 en retard de 15 minutes sur la route Bordeaux-Paris
-2026-04-07T12:14:41.987032575Z  [ALERTE] DELIVERY_DELAY | TRK-002 | Camion TRK-002 en retard de 15 minutes sur la route Lyon-Marseille
-2026-04-07T12:14:11.987643010Z  [ALERTE] DELIVERY_DELAY | TRK-003 | Camion TRK-003 en retard de 15 minutes sur la route Bordeaux-Paris
+2026-04-28T13:21:37.267447460Z  [ALERTE] DELIVERY_DELAY | TRK-003 | Camion TRK-003 en retard de 15 minutes sur la route Bordeaux-Paris
+2026-04-28T13:21:07.264199850Z  [ALERTE] DELIVERY_DELAY | TRK-002 | Camion TRK-002 en retard de 15 minutes sur la route Lyon-Marseille
+2026-04-28T13:20:37.265717841Z  [ALERTE] DELIVERY_DELAY | TRK-003 | Camion TRK-003 en retard de 15 minutes sur la route Bordeaux-Paris
+2026-04-28T13:20:07.264725308Z  [ALERTE] DELIVERY_DELAY | TRK-001 | Camion TRK-001 en retard de 15 minutes sur la route Paris-Lyon
+2026-04-28T13:19:37.281324033Z  [ALERTE] DELIVERY_DELAY | TRK-003 | Camion TRK-003 en retard de 15 minutes sur la route Bordeaux-Paris
 ```
 
 ```bash
@@ -1302,7 +1334,111 @@ gcloud logging read \
 ```
 
 ```
-# Aucune erreur Kafka relevee — cluster sain
+insertId: 7980alre9xxjqyb7
+labels:
+  compute.googleapis.com/resource_name: gk3-logistream-cluster-pool-2-13958a7e-r9qv
+  k8s-pod/app_kubernetes_io/instance: logistream-kafka
+  k8s-pod/app_kubernetes_io/managed-by: strimzi-cluster-operator
+  k8s-pod/app_kubernetes_io/name: kafka
+  k8s-pod/app_kubernetes_io/part-of: strimzi-logistream-kafka
+  k8s-pod/strimzi_io/broker-role: 'true'
+  k8s-pod/strimzi_io/cluster: logistream-kafka
+  k8s-pod/strimzi_io/component-type: kafka
+  k8s-pod/strimzi_io/controller: strimzipodset
+  k8s-pod/strimzi_io/controller-name: logistream-kafka-dual-role
+  k8s-pod/strimzi_io/controller-role: 'true'
+  k8s-pod/strimzi_io/kind: Kafka
+  k8s-pod/strimzi_io/name: logistream-kafka-kafka
+  k8s-pod/strimzi_io/pod-name: logistream-kafka-dual-role-0
+  k8s-pod/strimzi_io/pool-name: dual-role
+  k8s-pod/topology_kubernetes_io/region: europe-west9
+  k8s-pod/topology_kubernetes_io/zone: europe-west9-b
+logName: projects/ynov-cloud-tyson/logs/stderr
+receiveTimestamp: '2026-04-28T12:23:03.657695190Z'
+resource:
+  labels:
+    cluster_name: logistream-cluster
+    container_name: kafka
+    location: europe-west9
+    namespace_name: kafka
+    pod_name: logistream-kafka-dual-role-0
+    project_id: ynov-cloud-tyson
+  type: k8s_container
+severity: ERROR
+textPayload: + exec /usr/bin/tini -w -e 143 -- /opt/kafka/bin/kafka-server-start.sh
+  /tmp/strimzi.properties
+timestamp: '2026-04-28T12:23:01.655894378Z'
+---
+insertId: yib60p0dn4sjsakj
+labels:
+  compute.googleapis.com/resource_name: gk3-logistream-cluster-pool-1-8f07c7f2-jf56
+  k8s-pod/app_kubernetes_io/instance: logistream-kafka
+  k8s-pod/app_kubernetes_io/managed-by: strimzi-cluster-operator
+  k8s-pod/app_kubernetes_io/name: kafka
+  k8s-pod/app_kubernetes_io/part-of: strimzi-logistream-kafka
+  k8s-pod/strimzi_io/broker-role: 'true'
+  k8s-pod/strimzi_io/cluster: logistream-kafka
+  k8s-pod/strimzi_io/component-type: kafka
+  k8s-pod/strimzi_io/controller: strimzipodset
+  k8s-pod/strimzi_io/controller-name: logistream-kafka-dual-role
+  k8s-pod/strimzi_io/controller-role: 'true'
+  k8s-pod/strimzi_io/kind: Kafka
+  k8s-pod/strimzi_io/name: logistream-kafka-kafka
+  k8s-pod/strimzi_io/pod-name: logistream-kafka-dual-role-1
+  k8s-pod/strimzi_io/pool-name: dual-role
+  k8s-pod/topology_kubernetes_io/region: europe-west9
+  k8s-pod/topology_kubernetes_io/zone: europe-west9-a
+logName: projects/ynov-cloud-tyson/logs/stderr
+receiveTimestamp: '2026-04-28T12:22:59.965467048Z'
+resource:
+  labels:
+    cluster_name: logistream-cluster
+    container_name: kafka
+    location: europe-west9
+    namespace_name: kafka
+    pod_name: logistream-kafka-dual-role-1
+    project_id: ynov-cloud-tyson
+  type: k8s_container
+severity: ERROR
+textPayload: + exec /usr/bin/tini -w -e 143 -- /opt/kafka/bin/kafka-server-start.sh
+  /tmp/strimzi.properties
+timestamp: '2026-04-28T12:22:57.538240056Z'
+---
+insertId: vg6rknlnx422zhol
+labels:
+  compute.googleapis.com/resource_name: gk3-logistream-cluster-pool-1-8f07c7f2-jf56
+  k8s-pod/app_kubernetes_io/instance: logistream-kafka
+  k8s-pod/app_kubernetes_io/managed-by: strimzi-cluster-operator
+  k8s-pod/app_kubernetes_io/name: kafka
+  k8s-pod/app_kubernetes_io/part-of: strimzi-logistream-kafka
+  k8s-pod/strimzi_io/broker-role: 'true'
+  k8s-pod/strimzi_io/cluster: logistream-kafka
+  k8s-pod/strimzi_io/component-type: kafka
+  k8s-pod/strimzi_io/controller: strimzipodset
+  k8s-pod/strimzi_io/controller-name: logistream-kafka-dual-role
+  k8s-pod/strimzi_io/controller-role: 'true'
+  k8s-pod/strimzi_io/kind: Kafka
+  k8s-pod/strimzi_io/name: logistream-kafka-kafka
+  k8s-pod/strimzi_io/pod-name: logistream-kafka-dual-role-2
+  k8s-pod/strimzi_io/pool-name: dual-role
+  k8s-pod/topology_kubernetes_io/region: europe-west9
+  k8s-pod/topology_kubernetes_io/zone: europe-west9-a
+logName: projects/ynov-cloud-tyson/logs/stderr
+receiveTimestamp: '2026-04-28T12:23:00.040184245Z'
+resource:
+  labels:
+    cluster_name: logistream-cluster
+    container_name: kafka
+    location: europe-west9
+    namespace_name: kafka
+    pod_name: logistream-kafka-dual-role-2
+    project_id: ynov-cloud-tyson
+  type: k8s_container
+severity: ERROR
+textPayload: + exec /usr/bin/tini -w -e 143 -- /opt/kafka/bin/kafka-server-start.sh
+  /tmp/strimzi.properties
+timestamp: '2026-04-28T12:22:57.353664441Z'
+tnemeghaire
 ```
 
 ### 4.3 — Creer une alerte sur le Consumer Lag
