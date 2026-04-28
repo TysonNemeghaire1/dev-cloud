@@ -19,6 +19,9 @@ build/
 .env.*
 config.json
 lifecycle.json
+cicd-key.json
+**/k8s/secret.yaml
+**/k8s/secrets.yaml
 
 # IDE
 .idea/

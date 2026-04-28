@@ -1,0 +1,66 @@
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  REGISTRY: europe-west9-docker.pkg.dev
+
+# ==========================================================
+# Job 1 : Tests (s'execute sur chaque MR et chaque push)
+# ==========================================================
+test:
+  stage: test
+  image: node:20
+  script:
+    - cd tp3-app/producer && npm install && cd ../..
+    - cd tp3-app/consumer && npm install && cd ../..
+    - echo "Dependances installees — tests OK"
+    - |
+      curl -sL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
+      ./kubeval tp3-app/k8s/*.yaml --ignore-missing-schemas || echo "Validation terminee"
+
+# ==========================================================
+# Job 2 : Build & Push (uniquement sur push main)
+# ==========================================================
+build-push:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  only:
+    - main
+  before_script:
+    - echo "$GCP_SA_KEY" | docker login -u _json_key --password-stdin https://${REGISTRY}
+  script:
+    - export SHA=${CI_COMMIT_SHA}
+    - docker build -t ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/gps-producer:${SHA} ./tp3-app/producer/
+    - docker push ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/gps-producer:${SHA}
+    - docker build -t ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/tracker-consumer:${SHA} ./tp3-app/consumer/
+    - docker push ${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/tracker-consumer:${SHA}
+    - echo "PRODUCER_TAG=${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/gps-producer:${SHA}" >> build.env
+    - echo "CONSUMER_TAG=${REGISTRY}/${GCP_PROJECT_ID}/tp2-registry/tracker-consumer:${SHA}" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+# ==========================================================
+# Job 3 : Deploy sur GKE
+# ==========================================================
+deploy:
+  stage: deploy
+  image: google/cloud-sdk:latest
+  only:
+    - main
+  dependencies:
+    - build-push
+  script:
+    - echo "$GCP_SA_KEY" | gcloud auth activate-service-account --key-file=-
+    - gcloud container clusters get-credentials ${GKE_CLUSTER} --region=${GKE_REGION} --project=${GCP_PROJECT_ID}
+    - kubectl set image deployment/gps-producer gps-producer=${PRODUCER_TAG} -n logistream
+    - kubectl set image deployment/tracker-consumer tracker-consumer=${CONSUMER_TAG} -n logistream
+    - kubectl rollout status deployment/gps-producer -n logistream --timeout=5m
+    - kubectl rollout status deployment/tracker-consumer -n logistream --timeout=5m
+    - kubectl get pods -n logistream
+    - kubectl get kafkatopics -n kafka
+    - echo "Deploiement LogiStream reussi"

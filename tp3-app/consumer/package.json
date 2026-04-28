@@ -1,0 +1,13 @@
+{
+  "name": "logistream-tracker-consumer",
+  "version": "1.0.0",
+  "description": "Consumer GPS pour la flotte LogiStream",
+  "main": "tracker-consumer.js",
+  "scripts": {
+    "start": "node tracker-consumer.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  },
+  "engines": { "node": "20" }
+}
