@@ -3,8 +3,12 @@ name: LogiStream — CI/CD Pipeline
 on:
   push:
     branches: [main]
+    paths:
+      - 'tp3-app/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'tp3-app/**'
 
 env:
   GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
