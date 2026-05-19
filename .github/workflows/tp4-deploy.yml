@@ -106,21 +106,26 @@ jobs:
         run: gcloud auth configure-docker europe-west9-docker.pkg.dev --quiet
 
       - name: Scanner l'image pour les vulnérabilités critiques
+        env:
+          IMAGE_TAG: ${{ needs.build-push.outputs.image-tag }}
         run: |
+          echo "Image à scanner : ${IMAGE_TAG}"
           trivy image \
             --exit-code 1 \
             --severity "CRITICAL,HIGH" \
             --ignore-unfixed \
             --format table \
-            ${{ needs.build-push.outputs.image-tag }}
+            "${IMAGE_TAG}"
 
       - name: Générer un rapport SARIF (intégration GitHub Security)
         if: always()
+        env:
+          IMAGE_TAG: ${{ needs.build-push.outputs.image-tag }}
         run: |
           trivy image \
             --format sarif \
             --output trivy-results.sarif \
-            ${{ needs.build-push.outputs.image-tag }}
+            "${IMAGE_TAG}"
 
       - name: Uploader le rapport dans GitHub Security
         if: always()
