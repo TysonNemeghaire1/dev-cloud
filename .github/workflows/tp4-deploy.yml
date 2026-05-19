@@ -32,12 +32,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: tp4-app/package-lock.json
 
       - name: Installer les dépendances
-        run: npm ci
+        run: cd tp4-app && npm ci
 
       - name: Exécuter les tests
-        run: npm test
+        run: cd tp4-app && npm test
 
   # ============================================================
   # Job 2 : Build & Push de l'image Docker vers Artifact Registry
@@ -67,7 +68,7 @@ jobs:
         id: image-tag
         run: |
           TAG="${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          docker build -t "${TAG}" .
+          docker build -t "${TAG}" ./tp4-app
           docker push "${TAG}"
           # Tag latest aussi
           docker tag "${TAG}" "${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest"
@@ -150,8 +151,8 @@ jobs:
       - name: Déployer sur GKE
         run: |
           # Substituer le tag d'image dans le manifest
-          sed -i "s|IMAGE_TAG_PLACEHOLDER|${{ needs.build-push.outputs.image-tag }}|g" k8s/deployment.yaml
-          kubectl apply -f k8s/deployment.yaml
+          sed -i "s|IMAGE_TAG_PLACEHOLDER|${{ needs.build-push.outputs.image-tag }}|g" tp4-app/k8s/deployment.yaml
+          kubectl apply -f tp4-app/k8s/deployment.yaml
           kubectl rollout status deployment/finsecure-app --timeout=300s
 
       - name: Vérifier le déploiement
