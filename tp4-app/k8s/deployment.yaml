@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finsecure-app
+  namespace: default
+  labels:
+    app: finsecure-app
+    team: backend
+    environment: production
+    feature: payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: finsecure-app
+  template:
+    metadata:
+      labels:
+        app: finsecure-app
+    spec:
+      # KSA lié au GSA via Workload Identity — accès Secret Manager sans clé JSON
+      serviceAccountName: finsecure-app-ksa
+
+      initContainers:
+        # Récupère le secret depuis Secret Manager au démarrage et l'écrit en mémoire
+        - name: fetch-secrets
+          image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+          command:
+            - /bin/sh
+            - -c
+            - |
+              gcloud secrets versions access latest \
+                --secret="finsecure-db-password" \
+                --project="${PROJECT_ID}" \
+                > /secrets/db-password
+          env:
+            - name: PROJECT_ID
+              value: "ynov-cloud-tyson"
+          volumeMounts:
+            - name: secrets-vol
+              mountPath: /secrets
+
+      containers:
+        - name: finsecure-app
+          image: IMAGE_TAG_PLACEHOLDER
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: REDIS_HOST
+              value: "10.241.113.147"   # IP Memorystore finsecure-cache
+            - name: REDIS_PORT
+              value: "6379"
+            - name: GCP_PROJECT
+              value: "ynov-cloud-tyson"
+          volumeMounts:
+            - name: secrets-vol
+              mountPath: /secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+      volumes:
+        - name: secrets-vol
+          emptyDir:
+            medium: Memory   # Stocké en RAM uniquement, jamais sur disque
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finsecure-app-service
+  namespace: default
+spec:
+  type: LoadBalancer
+  selector:
+    app: finsecure-app
+  ports:
+    - port: 80
+      targetPort: 8080
