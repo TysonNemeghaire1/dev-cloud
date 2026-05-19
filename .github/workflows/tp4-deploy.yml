@@ -158,8 +158,6 @@ jobs:
 
       - name: Déployer sur GKE
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" tp4-app/k8s/deployment.yaml
           kubectl apply -f tp4-app/k8s/deployment.yaml
           kubectl rollout status deployment/finsecure-app --timeout=300s
 

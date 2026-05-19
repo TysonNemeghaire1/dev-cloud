@@ -42,7 +42,7 @@ spec:
 
       containers:
         - name: finsecure-app
-          image: IMAGE_TAG_PLACEHOLDER
+          image: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp4-app-registry/finsecure-api:latest
           ports:
             - containerPort: 8080
           env:
