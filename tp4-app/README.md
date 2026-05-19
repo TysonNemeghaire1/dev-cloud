@@ -2,7 +2,7 @@
 
 Plateforme de paiement en ligne pour e-commerçants, traitant 50 000 transactions/jour sous réglementation DSP2.
 
-Pipeline DevSecOps : build → scan Trivy → déploiement GKE.
+Pipeline DevSecOps : build → scan Trivy → déploiement GKE Autopilot.
 
 ---
 
