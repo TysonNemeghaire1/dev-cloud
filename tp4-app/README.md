@@ -1,4 +1,4 @@
-# FinSecure — Architecture Cloud DevSecOps (TP4)
+# FinSecure — Architecture Cloud DevSecOps
 
 Plateforme de paiement en ligne pour e-commerçants, traitant 50 000 transactions/jour sous réglementation DSP2.
 

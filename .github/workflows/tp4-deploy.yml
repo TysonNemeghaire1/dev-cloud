@@ -10,6 +10,10 @@ on:
     paths:
       - 'tp4-app/**'
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
   REGION: europe-west9
   REGISTRY: europe-west9-docker.pkg.dev
