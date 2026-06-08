@@ -1,0 +1,27 @@
+# Règles d'alerte FraudGuard (§3.4 de l'énoncé) en PrometheusRule.
+# Visibles dans Prometheus → Alerts (et utilisables comme source d'alerting Grafana).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fraudguard-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring   # sélectionné par le Prometheus du stack
+spec:
+  groups:
+    - name: fraudguard.rules
+      rules:
+        - alert: FraudSpikeDetection
+          expr: sum(rate(kafka_server_brokertopicmetrics_messagesin_total{topic="fraud-alerts"}[5m])) * 60 > 10
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ALERTE FraudGuard : Plus de 10 alertes/min générées — Incident potentiel"
+        - alert: DetectorLagCritical
+          expr: kafka_consumergroup_lag{consumergroup="fraud-detection-group"} > 1000
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CRITIQUE : le fraud-detector accuse un retard > 1000 messages — actions non détectées"

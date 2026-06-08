@@ -1,0 +1,17 @@
+# PodMonitor : indique à Prometheus de scraper les pods Kafka (port tcp-prometheus
+# exposé par le JMX Prometheus exporter activé via metricsConfig).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: fraudguard-kafka-metrics
+  namespace: fraudguard
+  labels:
+    release: monitoring   # Doit correspondre au podMonitorSelector du Prometheus installé
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/cluster: fraudguard-kafka
+  podMetricsEndpoints:
+    - path: /metrics
+      port: tcp-prometheus
+      interval: 30s   # scrape toutes les 30 secondes

@@ -1,0 +1,90 @@
+# Transaction Producer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tx-producer
+  namespace: fraudguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tx-producer
+  template:
+    metadata:
+      labels:
+        app: tx-producer
+    spec:
+      containers:
+        - name: tx-producer
+          image: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp2-registry/fraudguard-producer:v1
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "fraudguard-kafka-kafka-bootstrap.fraudguard.svc.cluster.local:9092"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+---
+# Fraud Detector (Kafka Streams)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-detector
+  namespace: fraudguard
+spec:
+  # IMPORTANT : replicas à 1 pour éviter le problème d'état distribué (voir question 1.3)
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fraud-detector
+  template:
+    metadata:
+      labels:
+        app: fraud-detector
+    spec:
+      containers:
+        - name: fraud-detector
+          image: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp2-registry/fraudguard-streams:v2
+          ports:
+            - name: metrics
+              containerPort: 9102
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "fraudguard-kafka-kafka-bootstrap.fraudguard.svc.cluster.local:9092"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+---
+# Alert Handler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-handler
+  namespace: fraudguard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alert-handler
+  template:
+    metadata:
+      labels:
+        app: alert-handler
+    spec:
+      serviceAccountName: fraudguard-alert-sa
+      containers:
+        - name: alert-handler
+          image: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp2-registry/fraudguard-alert-service:v1
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "fraudguard-kafka-kafka-bootstrap.fraudguard.svc.cluster.local:9092"
+            - name: GCP_PROJECT
+              value: "ynov-cloud-tyson"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"

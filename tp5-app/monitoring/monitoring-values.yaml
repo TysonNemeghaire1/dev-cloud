@@ -1,0 +1,45 @@
+# Valeurs kube-prometheus-stack (release "monitoring") allégées pour le cluster de TP.
+# Alertmanager désactivé : l'énoncé fait l'alerting dans Grafana (§3.4), pas via Alertmanager.
+alertmanager:
+  enabled: false
+
+# Composants control-plane désactivés : non scrapables sur GKE Autopilot et leur
+# monitoring tente d'écrire des Services dans kube-system (interdit par Warden).
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+coreDns:
+  enabled: false
+kubeDns:
+  enabled: false
+
+grafana:
+  adminPassword: "FraudGuard2026!"
+  service:
+    type: LoadBalancer
+  persistence:
+    enabled: false   # quota SSD limité → pas de PVC
+
+# Prometheus : pas de PVC (stockage emptyDir), rétention courte, ressources modestes
+prometheus:
+  prometheusSpec:
+    retention: 2h
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+    # Sélectionne tous les PodMonitor/ServiceMonitor portant le label release=monitoring
+    podMonitorSelectorNilUsesHelmValues: true
+    serviceMonitorSelectorNilUsesHelmValues: true
+
+# node-exporter désactivé : incompatible GKE Autopilot (hostPID/hostNetwork/hostPath
+# /proc /sys interdits par Warden). Inutile pour le dashboard Kafka de toute façon.
+prometheus-node-exporter:
+  enabled: false
+nodeExporter:
+  enabled: false

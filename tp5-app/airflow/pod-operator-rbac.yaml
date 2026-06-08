@@ -1,0 +1,30 @@
+# Permet à Airflow (airflow-worker, ns airflow) de gérer des pods dans le ns
+# fraudguard via KubernetesPodOperator (in_cluster=True) — réentraînement ML.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-pod-operator
+  namespace: fraudguard
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/exec"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-pod-operator
+  namespace: fraudguard
+subjects:
+  # airflow-worker (KubernetesExecutor) ET airflow-scheduler (LocalExecutor :
+  # les tâches s'exécutent dans le scheduler) — couvre les deux modes.
+  - kind: ServiceAccount
+    name: airflow-worker
+    namespace: airflow
+  - kind: ServiceAccount
+    name: airflow-scheduler
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: airflow-pod-operator
+  apiGroup: rbac.authorization.k8s.io

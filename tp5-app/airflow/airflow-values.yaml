@@ -1,0 +1,75 @@
+# Valeurs Helm pour Airflow FraudGuard (chart apache-airflow/airflow 1.16.0, Airflow 2.10.5)
+# LocalExecutor : tâches exécutées dans le scheduler (pas un pod/nœud par tâche).
+# Choisi car le projet de TP a un quota SSD/CPU limité (KubernetesExecutor saturait
+# le quota SSD_TOTAL_GB en créant un nœud par tâche).
+executor: LocalExecutor
+
+# Triggerer désactivé (aucun opérateur deferrable) → économise un pod + un PVC.
+triggerer:
+  enabled: false
+
+# Pas de persistance des logs (évite les PVC, quota SSD limité)
+logs:
+  persistence:
+    enabled: false
+
+# IMPORTANT : sous LocalExecutor le scheduler est un StatefulSet qui hérite du PVC
+# de logs des workers (100 Gi par défaut). On le désactive → logs en emptyDir,
+# plus de PVC → le scheduler peut être schedulé malgré le quota SSD saturé.
+workers:
+  persistence:
+    enabled: false
+
+# Image custom contenant nos DAGs (cf. airflow/Dockerfile)
+images:
+  airflow:
+    repository: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp2-registry/fraudguard-airflow
+    tag: "2.10.5-r3"
+  useDefaultImageForMigration: false
+
+# Pas d'exemples, DAGs livrés via l'image
+dags:
+  persistence:
+    enabled: false
+  gitSync:
+    enabled: false
+
+# UI accessible en LoadBalancer (pour screenshot du graph vert)
+webserver:
+  service:
+    type: LoadBalancer
+  defaultUser:
+    enabled: true
+    username: admin
+    password: FraudGuard2026!
+    email: admin@fraudguard.fr
+    firstName: Fraud
+    lastName: Guard
+
+# Annotations Workload Identity → GSA fraudguard-airflow (accès BigQuery)
+scheduler:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: fraudguard-airflow@ynov-cloud-tyson.iam.gserviceaccount.com
+workers:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: fraudguard-airflow@ynov-cloud-tyson.iam.gserviceaccount.com
+triggerer:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: fraudguard-airflow@ynov-cloud-tyson.iam.gserviceaccount.com
+
+# Postgres bundlé désactivé (images Bitnami retirées de Docker Hub).
+# On utilise notre propre Postgres officiel (cf. airflow/postgres.yaml).
+postgresql:
+  enabled: false
+data:
+  metadataConnection:
+    user: airflow
+    pass: airflow
+    protocol: postgresql
+    host: airflow-postgres
+    port: 5432
+    db: airflow
+    sslmode: disable

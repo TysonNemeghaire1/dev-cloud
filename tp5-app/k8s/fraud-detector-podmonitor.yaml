@@ -1,0 +1,16 @@
+# Scrape les métriques applicatives du fraud-detector (histogramme de latence).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: fraud-detector-metrics
+  namespace: fraudguard
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: fraud-detector
+  podMetricsEndpoints:
+    - path: /metrics
+      port: metrics
+      interval: 15s

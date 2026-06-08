@@ -1,0 +1,65 @@
+# Postgres pour les métadonnées Airflow (remplace le subchart Bitnami dont les
+# images ont été retirées de Docker Hub). Image officielle postgres.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-postgres-pvc
+  namespace: airflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-postgres
+  namespace: airflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-postgres
+  template:
+    metadata:
+      labels:
+        app: airflow-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: airflow
+            - name: POSTGRES_PASSWORD
+              value: airflow
+            - name: POSTGRES_DB
+              value: airflow
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: airflow-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-postgres
+  namespace: airflow
+spec:
+  selector:
+    app: airflow-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
