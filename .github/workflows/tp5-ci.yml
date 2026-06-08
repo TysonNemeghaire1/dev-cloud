@@ -1,0 +1,106 @@
+name: FraudGuard — CI (build, push, scan)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tp5-app/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tp5-app/**'
+  workflow_dispatch:   # déclenchement manuel depuis l'onglet Actions
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+
+env:
+  REGION: europe-west9
+  REGISTRY: europe-west9-docker.pkg.dev
+  REPOSITORY: tp2-registry   # registry réutilisé depuis le TP2
+
+jobs:
+  # ============================================================
+  # Build & Push + Scan des 5 images FraudGuard (matrix, en parallèle)
+  # ============================================================
+  build-scan:
+    name: Build · Push · Scan (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fraudguard-producer
+            context: tp5-app/fraud-detection/producer
+            dockerfile: tp5-app/fraud-detection/producer/Dockerfile
+          - image: fraudguard-streams
+            context: tp5-app/fraud-detection/streams
+            dockerfile: tp5-app/fraud-detection/streams/Dockerfile
+          - image: fraudguard-alert-service
+            context: tp5-app/fraud-detection/alert-service
+            dockerfile: tp5-app/fraud-detection/alert-service/Dockerfile
+          - image: fraud-ml-trainer
+            context: tp5-app/fraud-detection/ml-trainer
+            dockerfile: tp5-app/fraud-detection/ml-trainer/Dockerfile
+          # L'image Airflow se construit depuis tp5-app/ (le Dockerfile copie dags/)
+          - image: fraudguard-airflow
+            context: tp5-app
+            dockerfile: tp5-app/airflow/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Authentification GCP via Workload Identity Federation (sans clé JSON)
+      - name: Authentification GCP (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA }}
+
+      - name: Configurer Docker pour Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Construire et pousser l'image
+        id: build
+        run: |
+          BASE="${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.image }}"
+          TAG="${BASE}:${{ github.sha }}"
+          docker build -f "${{ matrix.dockerfile }}" -t "${TAG}" "${{ matrix.context }}"
+          docker push "${TAG}"
+          docker tag "${TAG}" "${BASE}:latest"
+          docker push "${BASE}:latest"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      # Scan de vulnérabilités Trivy (bloque si CRITICAL/HIGH corrigeables)
+      - name: Installer Trivy
+        run: |
+          sudo apt-get install -y wget apt-transport-https gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -y trivy
+
+      - name: Scanner l'image (CRITICAL/HIGH corrigeables)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity "CRITICAL,HIGH" \
+            --ignore-unfixed \
+            --format table \
+            "${{ steps.build.outputs.tag }}"
+
+      - name: Générer un rapport SARIF (GitHub Security)
+        if: always()
+        run: |
+          trivy image \
+            --format sarif \
+            --output "trivy-${{ matrix.image }}.sarif" \
+            "${{ steps.build.outputs.tag }}"
+
+      - name: Uploader le SARIF dans GitHub Security
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.image)) != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: "trivy-${{ matrix.image }}.sarif"
+          category: "trivy-${{ matrix.image }}"
