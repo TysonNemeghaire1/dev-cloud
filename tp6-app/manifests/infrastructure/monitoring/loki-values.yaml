@@ -1,0 +1,28 @@
+# Chart grafana/loki en mode SingleBinary (pour la prod : SimpleScalable ou Distributed)
+deploymentMode: SingleBinary
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2026-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  storage:
+    type: 'filesystem'
+singleBinary:
+  replicas: 1
+  persistence:
+    size: 10Gi
+# On désactive les composants non utilisés en SingleBinary
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0

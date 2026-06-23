@@ -1,0 +1,26 @@
+# Transaction Producer (repris du TP5)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tx-producer
+  namespace: fraudguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tx-producer
+  template:
+    metadata:
+      labels:
+        app: tx-producer
+    spec:
+      containers:
+        - name: tx-producer
+          image: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp2-registry/fraudguard-producer:v1
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "fraudguard-kafka-kafka-bootstrap.fraudguard.svc.cluster.local:9092"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"

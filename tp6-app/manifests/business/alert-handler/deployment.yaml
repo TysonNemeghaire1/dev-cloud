@@ -1,0 +1,29 @@
+# Alert Handler (repris du TP5)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-handler
+  namespace: fraudguard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alert-handler
+  template:
+    metadata:
+      labels:
+        app: alert-handler
+    spec:
+      serviceAccountName: fraudguard-alert-sa
+      containers:
+        - name: alert-handler
+          image: europe-west9-docker.pkg.dev/ynov-cloud-tyson/tp2-registry/fraudguard-alert-service:v1
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "fraudguard-kafka-kafka-bootstrap.fraudguard.svc.cluster.local:9092"
+            - name: GCP_PROJECT
+              value: "ynov-cloud-tyson"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"

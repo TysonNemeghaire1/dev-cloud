@@ -1,0 +1,54 @@
+# Values kube-prometheus-stack (release "monitoring") — repris/adapté du TP5.
+# Alertmanager désactivé : l'alerting se fait dans Grafana (cf. TP5 §3.4).
+alertmanager:
+  enabled: false
+
+# Composants control-plane désactivés : non scrapables sur GKE Autopilot.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+coreDns:
+  enabled: false
+kubeDns:
+  enabled: false
+
+grafana:
+  adminPassword: "FraudGuard2026!"
+  service:
+    type: LoadBalancer
+  persistence:
+    enabled: false   # quota SSD limité → pas de PVC
+  # Datasources Loki et Tempo de la stack LGTM (Partie 2)
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring.svc.cluster.local:3100
+      access: proxy
+    - name: Tempo
+      type: tempo
+      url: http://tempo.monitoring:3200
+      access: proxy
+
+prometheus:
+  prometheusSpec:
+    retention: 2h
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+    # Sélectionne tous les PodMonitor/ServiceMonitor/PrometheusRule portant le
+    # label release=monitoring (cf. recording-rules.yaml).
+    podMonitorSelectorNilUsesHelmValues: true
+    serviceMonitorSelectorNilUsesHelmValues: true
+    ruleSelectorNilUsesHelmValues: true
+
+# node-exporter désactivé : incompatible GKE Autopilot.
+prometheus-node-exporter:
+  enabled: false
+nodeExporter:
+  enabled: false

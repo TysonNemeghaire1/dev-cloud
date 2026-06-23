@@ -1,0 +1,24 @@
+# Note Chaos Mesh v2+ : depuis la 2.0, le champ scheduler.cron a été retiré du spec
+# des expériences ponctuelles. Pour une exécution récurrente, on utilise une ressource
+# Schedule qui wrappe le PodChaos.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: kill-fraud-detector
+  namespace: fraudguard
+spec:
+  schedule: '@every 60s'            # Toutes les 60 secondes, un nouveau kill
+  historyLimit: 5                   # Conserver l'historique des 5 dernières exécutions
+  concurrencyPolicy: Forbid         # Pas de chevauchement (attendre la fin avant de relancer)
+  type: PodChaos                    # Type de l'expérience encapsulée
+  podChaos:
+    # Type d'action : "pod-kill" supprime le pod, "pod-failure" le rend indisponible
+    action: pod-kill
+    mode: one   # Cibler UN seul pod (blast radius limité)
+    selector:
+      namespaces:
+        - fraudguard
+      labelSelectors:
+        app: fraud-detector
+    # Durée de l'effet d'UNE expérience (10s suffisent pour le kill)
+    duration: '10s'

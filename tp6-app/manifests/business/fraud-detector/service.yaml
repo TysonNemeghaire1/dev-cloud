@@ -1,0 +1,31 @@
+# Service "stable" : pointe toujours vers la version stable du fraud-detector
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-detector-stable
+  namespace: fraudguard
+  labels:
+    app: fraud-detector
+spec:
+  selector:
+    app: fraud-detector
+  ports:
+    - name: metrics
+      port: 9102
+      targetPort: 9102
+---
+# Service "canary" : pointe vers la nouvelle version pendant le rollout
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-detector-canary
+  namespace: fraudguard
+  labels:
+    app: fraud-detector
+spec:
+  selector:
+    app: fraud-detector
+  ports:
+    - name: metrics
+      port: 9102
+      targetPort: 9102

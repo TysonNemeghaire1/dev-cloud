@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fraud-detector
+  namespace: argocd
+  annotations:
+    # Sync Wave : ordre de déploiement (négatif = avant, positif = après)
+    # Infrastructure = wave 0, Plateforme = wave 1, Business = wave 2
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TysonNemeghaire1/dev-cloud.git
+    targetRevision: main
+    path: tp6-app/manifests/business/fraud-detector
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fraudguard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

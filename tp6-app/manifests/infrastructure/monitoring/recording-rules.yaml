@@ -1,0 +1,50 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fraudguard-slo-rules
+  namespace: monitoring
+  labels:
+    # Label requis pour que le Prometheus de kube-prometheus-stack (release "monitoring")
+    # découvre cette règle (cf. ruleSelector du chart, comme dans le TP5).
+    release: monitoring
+spec:
+  groups:
+    - name: fraudguard.slo
+      interval: 30s
+      rules:
+        # Taux de succès du fraud-detector sur 5 minutes
+        - record: fraudguard:detector_success_rate:5m
+          expr: |
+            sum(rate(kafka_consumer_records_consumed_total{
+              consumer_group="fraud-detection-group"
+            }[5m]))
+            /
+            sum(rate(kafka_consumer_records_total{
+              consumer_group="fraud-detection-group"
+            }[5m]))
+
+        # Error Budget RESTANT sur le mois en cours (fraction entre 0 et 1)
+        # Formule SRE : 1 - (taux d'erreur observé / taux d'erreur autorisé)
+        #   taux d'erreur observé  = 1 - avg(success_rate sur 30j)
+        #   taux d'erreur autorisé = 1 - SLO   (ex: 1 - 0.995 = 0.005)
+        # Résultat : 1.0 = budget plein ; 0.0 = budget épuisé ; négatif = SLO violé
+        - record: fraudguard:detector_error_budget_remaining:30d
+          expr: |
+            1 - (
+              (1 - avg_over_time(
+                fraudguard:detector_success_rate:5m[30d]
+              ))
+              /
+              (1 - 0.995)                # SLO du fraud-detector
+            )
+
+        # Alerte : Error Budget < 20% restant
+        - alert: ErrorBudgetCritical
+          expr: fraudguard:detector_error_budget_remaining:30d < 0.20
+          for: 5m
+          labels:
+            severity: critical
+            team: sre
+          annotations:
+            summary: "Error Budget fraud-detector < 20% — Feature Freeze recommandé"
+            runbook: "https://runbooks.fraudguard.fr/error-budget"

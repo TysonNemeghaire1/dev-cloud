@@ -1,0 +1,96 @@
+# Cluster Kafka FraudGuard (repris du TP5).
+# Strimzi 1.0.0 a supprimé ZooKeeper → mode KRaft + KafkaNodePool.
+# - version 4.1.0 (seules les 4.1.x/4.2.x sont supportées par l'opérateur 1.0.0).
+# - replicas et storage migrent dans le KafkaNodePool.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: fraudguard
+  labels:
+    strimzi.io/cluster: fraudguard-kafka
+spec:
+  replicas: 3   # 3 nœuds (controller + broker)
+  roles:
+    - controller
+    - broker
+  storage:
+    type: persistent-claim
+    size: 10Gi
+    deleteClaim: true
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: fraudguard-kafka
+  namespace: fraudguard
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 4.1.0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      num.partitions: 6
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      # Rétention courte : les transactions sont analysées dans les 24h
+      log.retention.hours: 24
+      # KafkaJS (client Node pur) ne décompresse pas snappy sans binding natif →
+      # `producer` conserve le codec d'origine (ici non compressé) côté broker.
+      compression.type: producer
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+  # Kafka Exporter → métriques de consumer lag (kafka_consumergroup_lag)
+  kafkaExporter:
+    topicRegex: ".*"
+    groupRegex: ".*"
+---
+# Topics FraudGuard
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: transactions-raw
+  namespace: fraudguard
+  labels:
+    strimzi.io/cluster: fraudguard-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: "86400000"   # 24h
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: fraud-alerts
+  namespace: fraudguard
+  labels:
+    strimzi.io/cluster: fraudguard-kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    # Les alertes sont critiques : rétention 30 jours pour audit
+    retention.ms: "2592000000"   # 30 jours
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: transaction-aggregates
+  namespace: fraudguard
+  labels:
+    strimzi.io/cluster: fraudguard-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    # Topic compacté : garder la dernière valeur par clé (account_id)
+    cleanup.policy: "compact"
+    retention.ms: "604800000"

@@ -1,0 +1,27 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: latency-kafka-detector
+  namespace: fraudguard
+spec:
+  action: delay
+  mode: all   # Sur TOUS les pods fraud-detector
+  selector:
+    namespaces:
+      - fraudguard
+    labelSelectors:
+      app: fraud-detector
+  delay:
+    # Ajouter 200ms ± 50ms de latence sur tout le trafic sortant
+    latency: '200ms'
+    correlation: '50'
+    jitter: '50ms'
+  # Cibler UNIQUEMENT le trafic vers Kafka (ne pas casser le trafic vers Prometheus)
+  target:
+    selector:
+      namespaces:
+        - fraudguard
+      labelSelectors:
+        strimzi.io/cluster: fraudguard-kafka
+    mode: all
+  duration: '3m'
